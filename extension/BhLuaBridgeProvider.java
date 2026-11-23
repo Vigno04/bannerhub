@@ -97,7 +97,8 @@ public class BhLuaBridgeProvider extends LuaToolsBridgeProvider {
         int runningApp = 0;
         String runningPrefix = null;
         String runningExe = null;
-        boolean sawGameExe = false;
+        int sawExePolls = 0;
+        long wineStartedAt = 0L;
         long exeGoneSince = 0L;
         while (true) {
             try {
@@ -106,7 +107,8 @@ public class BhLuaBridgeProvider extends LuaToolsBridgeProvider {
                 int winePid = findWinePid(ctx);
                 boolean running = winePid > 0;
                 if (running && !wasRunning) {
-                    sawGameExe = false;
+                    sawExePolls = 0;
+                    wineStartedAt = System.currentTimeMillis();
                     exeGoneSince = 0L;
                     runningExe = null;
                     String[] info = latestLaunch(ctx);
@@ -121,14 +123,14 @@ public class BhLuaBridgeProvider extends LuaToolsBridgeProvider {
                         }
                     }
                 } else if (running && LuaToolsSteamEmu.autoCloseEnabled(ctx) && runningExe != null) {
+                    long now = System.currentTimeMillis();
                     if (isExeRunningInProc(runningExe)) {
-                        sawGameExe = true;
+                        sawExePolls++;
                         exeGoneSince = 0L;
-                    } else if (sawGameExe) {
-                        long now = System.currentTimeMillis();
+                    } else if (sawExePolls >= 3 && (now - wineStartedAt) >= 15000L) {
                         if (exeGoneSince == 0L) {
                             exeGoneSince = now;
-                        } else if (now - exeGoneSince >= 4000L) {
+                        } else if (now - exeGoneSince >= 6000L) {
                             android.os.Process.killProcess(winePid);
                         }
                     }
@@ -138,7 +140,8 @@ public class BhLuaBridgeProvider extends LuaToolsBridgeProvider {
                         runningApp = 0;
                     }
                     runningExe = null;
-                    sawGameExe = false;
+                    sawExePolls = 0;
+                    wineStartedAt = 0L;
                     exeGoneSince = 0L;
                 }
                 wasRunning = running;

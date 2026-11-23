@@ -45,7 +45,7 @@ public class LuaToolsBridgeProvider extends ContentProvider {
     public static final int BRIDGE_VERSION = 2;
 
     private static final Set<String> KNOWN_PROXY_DLLS = new HashSet<>(Arrays.asList(
-            "onlinefix64", "onlinefix", "winmm", "version", "dxgi", "dinput8",
+            "onlinefix64", "onlinefix", "winmm", "winhttp", "version", "dxgi", "dinput8",
             "steam_api64", "steam_api", "d3d11", "xinput1_4", "xinput1_3", "dsound", "bink2w64"
     ));
 

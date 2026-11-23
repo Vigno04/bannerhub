@@ -71,7 +71,7 @@ public final class LuaToolsSteamEmu {
     }
 
     public static boolean autoCloseEnabled(Context ctx) {
-        return prefs(ctx).getBoolean(KEY_AUTOCLOSE, false);
+        return prefs(ctx).getBoolean(KEY_AUTOCLOSE, true);
     }
 
     public static void setAutoCloseEnabled(Context ctx, boolean on) {
