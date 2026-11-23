@@ -226,6 +226,7 @@ public class LuaToolsBridgeProvider extends ContentProvider {
             case "apply_fix": {
                 int appId = extras != null ? extras.getInt("app_id", 0) : 0;
                 String name = extras != null ? extras.getString("name", "") : "";
+                String fixVersion = extras != null ? extras.getString("fix_version", "1.0.0") : "1.0.0";
                 if (appId <= 0) {
                     res.putBoolean("ok", false);
                     res.putString("error", "Invalid app_id");
@@ -241,8 +242,10 @@ public class LuaToolsBridgeProvider extends ContentProvider {
                     File gameDir = resolveGameInstallDir(ctx, appId, name);
                     if (!gameDir.exists()) gameDir.mkdirs();
                     Set<String> overrides = new LinkedHashSet<>();
-                    int extracted = extractFixZipWithBackup(zipFile, gameDir, overrides);
+                    List<String> extractedFiles = new ArrayList<>();
+                    int extracted = extractFixZipWithBackup(zipFile, gameDir, overrides, extractedFiles);
                     zipFile.delete();
+                    saveFixMarker(ctx, appId, gameDir, fixVersion, extractedFiles);
                     if (!overrides.isEmpty()) {
                         onFixDllOverrides(ctx, appId, overrides);
                     }
@@ -254,8 +257,38 @@ public class LuaToolsBridgeProvider extends ContentProvider {
                     res.putBoolean("ok", true);
                     res.putInt("app_id", appId);
                     res.putInt("extracted_files", extracted);
+                    res.putString("fix_version", fixVersion);
                     res.putString("game_dir", gameDir.getAbsolutePath());
                     res.putString("dll_overrides", ov.toString());
+                } catch (Exception e) {
+                    res.putBoolean("ok", false);
+                    res.putString("error", e.getMessage());
+                }
+                return res;
+            }
+            case "remove_fix": {
+                int appId = extras != null ? extras.getInt("app_id", 0) : 0;
+                if (appId <= 0) {
+                    res.putBoolean("ok", false);
+                    res.putString("error", "Invalid app_id");
+                    return res;
+                }
+                try {
+                    int removed = removeFixWithRestore(ctx, appId);
+                    res.putBoolean("ok", true);
+                    res.putInt("app_id", appId);
+                    res.putInt("removed_files", removed);
+                } catch (Exception e) {
+                    res.putBoolean("ok", false);
+                    res.putString("error", e.getMessage());
+                }
+                return res;
+            }
+            case "fix_status": {
+                try {
+                    JSONObject installed = listInstalledFixes(ctx);
+                    res.putBoolean("ok", true);
+                    res.putString("installed_json", installed.toString());
                 } catch (Exception e) {
                     res.putBoolean("ok", false);
                     res.putString("error", e.getMessage());
@@ -322,7 +355,79 @@ public class LuaToolsBridgeProvider extends ContentProvider {
         }
     }
 
-    private static int extractFixZipWithBackup(File zipFile, File gameDir, Set<String> proxiesOut) throws Exception {
+    private static File fixMarkerDir(Context ctx) {
+        File dir = new File(ctx.getFilesDir(), "luatools/fixes");
+        if (!dir.exists()) dir.mkdirs();
+        return dir;
+    }
+
+    private static void saveFixMarker(Context ctx, int appId, File gameDir, String version, List<String> files) throws Exception {
+        JSONObject marker = new JSONObject();
+        marker.put("app_id", appId);
+        marker.put("game_dir", gameDir.getAbsolutePath());
+        marker.put("version", (version == null || version.isEmpty()) ? "1.0.0" : version);
+        marker.put("ts", System.currentTimeMillis());
+        org.json.JSONArray arr = new org.json.JSONArray();
+        for (String rel : files) arr.put(rel);
+        marker.put("files", arr);
+        LuaToolsStore.writeAllBytes(new File(fixMarkerDir(ctx), appId + ".json"), marker.toString().getBytes("UTF-8"));
+    }
+
+    private static JSONObject listInstalledFixes(Context ctx) {
+        JSONObject out = new JSONObject();
+        File[] fs = fixMarkerDir(ctx).listFiles();
+        if (fs == null) return out;
+        for (File f : fs) {
+            if (!f.getName().endsWith(".json")) continue;
+            try {
+                JSONObject m = new JSONObject(new String(LuaToolsStore.readAllBytes(f), "UTF-8"));
+                int appId = m.optInt("app_id", 0);
+                File gameDir = new File(m.optString("game_dir", ""));
+                org.json.JSONArray files = m.optJSONArray("files");
+                boolean present = gameDir.isDirectory() && files != null && files.length() > 0;
+                if (present) {
+                    for (int i = 0; i < files.length(); i++) {
+                        if (!new File(gameDir, files.getString(i)).isFile()) {
+                            present = false;
+                            break;
+                        }
+                    }
+                }
+                if (present && appId > 0) {
+                    out.put(String.valueOf(appId), m.optString("version", "1.0.0"));
+                } else {
+                    f.delete();
+                }
+            } catch (Throwable ignored) {}
+        }
+        return out;
+    }
+
+    private static int removeFixWithRestore(Context ctx, int appId) throws Exception {
+        File mf = new File(fixMarkerDir(ctx), appId + ".json");
+        if (!mf.isFile()) return 0;
+        JSONObject m = new JSONObject(new String(LuaToolsStore.readAllBytes(mf), "UTF-8"));
+        File gameDir = new File(m.optString("game_dir", ""));
+        File backupDir = new File(gameDir, ".luatools_backup");
+        org.json.JSONArray files = m.optJSONArray("files");
+        int removed = 0;
+        if (files != null && gameDir.isDirectory()) {
+            for (int i = 0; i < files.length(); i++) {
+                String rel = files.getString(i);
+                File target = new File(gameDir, rel);
+                if (target.isFile() && target.delete()) removed++;
+                File bak = new File(backupDir, rel);
+                if (bak.isFile()) {
+                    LuaToolsStore.writeAllBytes(target, LuaToolsStore.readAllBytes(bak));
+                    bak.delete();
+                }
+            }
+        }
+        mf.delete();
+        return removed;
+    }
+
+    private static int extractFixZipWithBackup(File zipFile, File gameDir, Set<String> proxiesOut, List<String> extractedRelOut) throws Exception {
         File backupDir = new File(gameDir, ".luatools_backup");
         String canonicalGame = gameDir.getCanonicalPath() + File.separator;
         int count = 0;
@@ -353,6 +458,7 @@ public class LuaToolsBridgeProvider extends ContentProvider {
                     } finally {
                         fos.close();
                     }
+                    extractedRelOut.add(name);
                     String base = outFile.getName().toLowerCase();
                     if (base.endsWith(".dll")) {
                         String stem = base.substring(0, base.length() - 4);
