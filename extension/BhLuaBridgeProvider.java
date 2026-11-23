@@ -127,10 +127,10 @@ public class BhLuaBridgeProvider extends LuaToolsBridgeProvider {
                     if (isExeRunningInProc(runningExe)) {
                         sawExePolls++;
                         exeGoneSince = 0L;
-                    } else if (sawExePolls >= 3 && (now - wineStartedAt) >= 15000L) {
+                    } else if (sawExePolls >= 2 && (now - wineStartedAt) >= 15000L) {
                         if (exeGoneSince == 0L) {
                             exeGoneSince = now;
-                        } else if (now - exeGoneSince >= 6000L) {
+                        } else if (now - exeGoneSince >= 4000L) {
                             android.os.Process.killProcess(winePid);
                         }
                     }
@@ -168,19 +168,30 @@ public class BhLuaBridgeProvider extends LuaToolsBridgeProvider {
     private static boolean isExeRunningInProc(String exeName) {
         if (exeName == null || exeName.isEmpty()) return false;
         String needle = exeName.toLowerCase();
+        String stem = needle.endsWith(".exe") ? needle.substring(0, needle.length() - 4) : needle;
+        String commNeedle = needle.length() > 15 ? needle.substring(0, 15) : needle;
         File[] procs = new File("/proc").listFiles();
         if (procs == null) return false;
         for (File p : procs) {
             String n = p.getName();
             if (n.isEmpty() || n.charAt(0) < '0' || n.charAt(0) > '9') continue;
             File cmd = new File(p, "cmdline");
-            if (!cmd.isFile()) continue;
-            try {
-                byte[] b = readAllBytes(cmd);
-                if (b.length == 0) continue;
-                String s = new String(b, "UTF-8").replace('\0', ' ').toLowerCase();
-                if (s.contains(needle)) return true;
-            } catch (Throwable ignored) {}
+            if (cmd.isFile()) {
+                try {
+                    byte[] b = readAllBytes(cmd);
+                    if (b.length > 0) {
+                        String s = new String(b, "UTF-8").replace('\0', ' ').toLowerCase();
+                        if (s.contains(needle) || s.contains(stem)) return true;
+                    }
+                } catch (Throwable ignored) {}
+            }
+            File comm = new File(p, "comm");
+            if (comm.isFile()) {
+                try {
+                    String c = new String(readAllBytes(comm), "UTF-8").trim().toLowerCase();
+                    if (!c.isEmpty() && (c.equals(commNeedle) || c.startsWith(stem.length() > 15 ? stem.substring(0, 15) : stem))) return true;
+                } catch (Throwable ignored) {}
+            }
         }
         return false;
     }
