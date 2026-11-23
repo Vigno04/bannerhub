@@ -954,7 +954,7 @@ jobs:
         run: |
           ANDROID_JAR=$(ls $ANDROID_SDK_ROOT/platforms/android-*/android.jar 2>/dev/null | sort -V | tail -1)
           mkdir -p ext_classes
-          javac -source 8 -target 8 -cp "$ANDROID_JAR" -d ext_classes extension/*.java
+          javac -source 8 -target 8 -cp "$ANDROID_JAR" -d ext_classes extension/*.java extension/com/luatools/javasteam/*.java
           BUILD_TOOLS=$(ls $ANDROID_SDK_ROOT/build-tools | sort -V | tail -1)
           mkdir -p ext_dex
           $ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS/d8 \

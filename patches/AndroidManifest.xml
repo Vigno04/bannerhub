@@ -41,6 +41,7 @@
         <package android:name="com.google.android.gms.policy_cast_dynamite"/>
         <package android:name="hk.alipay.wallet"/>
         <package android:name="hk.alipay.walletRC"/>
+        <package android:name="com.luatools.companion"/>
     </queries>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:maxSdkVersion="33" android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"/>
@@ -381,5 +382,6 @@
                 <action android:name="android.content.action.DOCUMENTS_PROVIDER"/>
             </intent-filter>
         </provider>
+        <provider android:authorities="gamehub.lite.bh_lua_bridge" android:exported="true" android:name="app.revanced.extension.gamehub.BhLuaBridgeProvider"/>
     </application>
 </manifest>
