@@ -44,6 +44,109 @@ public final class LuaToolsCloudSync {
     }
 
     /**
+     * Resolves the game's real Steam AutoCloud save directory from cached PICS {@code ufs.savefiles}
+     * (e.g. {@code Documents/My Games/<Game>/Steam/<steamId64>}), falling back to Goldberg's
+     * {@code AppData/Roaming/GSE Saves/<appId>/remote} when no Windows AutoCloud path is declared.
+     */
+    public static File resolveCloudSaveDir(
+            Context ctx,
+            int appId,
+            File winePrefix,
+            String userName,
+            String steamId64
+    ) {
+        String user = (userName == null || userName.isEmpty()) ? "steamuser" : userName;
+        File fallback = new File(winePrefix,
+                "drive_c/users/" + user + "/AppData/Roaming/GSE Saves/" + appId + "/remote");
+        if (ctx == null || winePrefix == null) return fallback;
+
+        try {
+            org.json.JSONObject pics = LuaToolsJavaSteamHook.get(ctx).getStore().getPicsInfo(appId);
+            org.json.JSONObject savefiles = pics != null
+                    ? pics.optJSONObject("ufs") != null
+                        ? pics.optJSONObject("ufs").optJSONObject("savefiles")
+                        : null
+                    : null;
+            if (savefiles == null) return fallback;
+
+            java.util.Iterator<String> keys = savefiles.keys();
+            while (keys.hasNext()) {
+                String k = keys.next();
+                org.json.JSONObject entry = savefiles.optJSONObject(k);
+                if (entry == null) continue;
+
+                // Skip non-Windows entries if platforms is explicitly specified
+                org.json.JSONObject platforms = entry.optJSONObject("platforms");
+                if (platforms != null && platforms.length() > 0) {
+                    boolean hasWin = false;
+                    java.util.Iterator<String> pk = platforms.keys();
+                    while (pk.hasNext()) {
+                        String pv = platforms.optString(pk.next(), "").toLowerCase();
+                        if (pv.contains("win") || pv.equals("all")) {
+                            hasWin = true;
+                            break;
+                        }
+                    }
+                    if (!hasWin) continue;
+                }
+
+                String root = entry.optString("root", "");
+                String relPath = entry.optString("path", "").replace('\\', '/');
+                File baseDir = null;
+                if (root.equalsIgnoreCase("WinMyDocuments") || root.equalsIgnoreCase("SteamAutoSaveRoot")) {
+                    baseDir = new File(winePrefix, "drive_c/users/" + user + "/Documents");
+                } else if (root.equalsIgnoreCase("WinAppDataRoaming")) {
+                    baseDir = new File(winePrefix, "drive_c/users/" + user + "/AppData/Roaming");
+                } else if (root.equalsIgnoreCase("WinAppDataLocal")) {
+                    baseDir = new File(winePrefix, "drive_c/users/" + user + "/AppData/Local");
+                } else if (root.equalsIgnoreCase("WinAppDataLocalLow")) {
+                    baseDir = new File(winePrefix, "drive_c/users/" + user + "/AppData/LocalLow");
+                } else if (root.equalsIgnoreCase("WinSavedGames")) {
+                    baseDir = new File(winePrefix, "drive_c/users/" + user + "/Saved Games");
+                } else {
+                    continue;
+                }
+
+                // Expand {64BitSteamID} using provided ID or auto-detected 7656119... folder
+                if (relPath.contains("{64BitSteamID}")) {
+                    int tokenIdx = relPath.indexOf("{64BitSteamID}");
+                    String prefixRel = relPath.substring(0, tokenIdx).replaceAll("/+$", "");
+                    String suffixRel = relPath.substring(tokenIdx + "{64BitSteamID}".length()).replaceAll("^/+", "");
+                    String resolvedId = (steamId64 != null && !steamId64.isEmpty() && !steamId64.equals("0"))
+                            ? steamId64
+                            : detectSteamId64Dir(new File(baseDir, prefixRel));
+                    if (resolvedId != null && !resolvedId.isEmpty()) {
+                        relPath = (prefixRel.isEmpty() ? "" : prefixRel + "/")
+                                + resolvedId
+                                + (suffixRel.isEmpty() ? "" : "/" + suffixRel);
+                    } else {
+                        relPath = prefixRel;
+                    }
+                }
+                relPath = relPath.replaceAll("^/+|/+$", "");
+                File resolved = relPath.isEmpty() ? baseDir : new File(baseDir, relPath);
+                Log.i(TAG, "Resolved cloud save dir for appId=" + appId + ": " + resolved.getAbsolutePath());
+                return resolved;
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "resolveCloudSaveDir failed for appId=" + appId + ": " + t.getMessage());
+        }
+        return fallback;
+    }
+
+    private static String detectSteamId64Dir(File parentDir) {
+        if (parentDir == null || !parentDir.isDirectory()) return null;
+        File[] children = parentDir.listFiles();
+        if (children == null) return null;
+        for (File c : children) {
+            if (c.isDirectory() && c.getName().matches("7656119\\d{10}")) {
+                return c.getName();
+            }
+        }
+        return null;
+    }
+
+    /**
      * Call before launching a LuaTools game. Pulls the latest saves from Google Drive
      * via the LuaTools Companion App and unpacks them directly into {@code saveRemoteDir}
      * (e.g. {@code <winePrefix>/drive_c/users/steamuser/AppData/Roaming/GSE Saves/<appId>/remote}).

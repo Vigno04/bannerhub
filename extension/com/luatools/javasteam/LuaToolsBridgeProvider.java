@@ -193,6 +193,12 @@ public class LuaToolsBridgeProvider extends ContentProvider {
                 res.putStringArrayList("prefixes", new ArrayList<String>());
                 return res;
             }
+            case "list_lua_games": {
+                ArrayList<Integer> ids = new ArrayList<>(store.listLuaAppIds());
+                res.putBoolean("ok", true);
+                res.putIntegerArrayList("app_ids", ids);
+                return res;
+            }
             case "add_steam_game": {
                 int appId = extras != null ? extras.getInt("app_id", 0) : 0;
                 String name = extras != null ? extras.getString("name", "") : "";
