@@ -20,12 +20,14 @@ public final class BhLuaCloudHook {
 
     public static void onPreLaunch(Context ctx, int appId, String winePrefix) {
         if (winePrefix == null || winePrefix.isEmpty()) return;
-        LuaToolsCloudSync.onPreLaunch(ctx, appId, getGseRemoteDir(winePrefix, appId));
+        File saveDir = LuaToolsCloudSync.resolveCloudSaveDir(ctx, appId, new File(winePrefix), "steamuser", "");
+        LuaToolsCloudSync.onPreLaunch(ctx, appId, saveDir);
     }
 
     public static void onPostExit(Context ctx, int appId, String winePrefix) {
         if (winePrefix == null || winePrefix.isEmpty()) return;
-        LuaToolsCloudSync.onPostExit(ctx, appId, getGseRemoteDir(winePrefix, appId));
+        File saveDir = LuaToolsCloudSync.resolveCloudSaveDir(ctx, appId, new File(winePrefix), "steamuser", "");
+        LuaToolsCloudSync.onPostExit(ctx, appId, saveDir);
     }
 
     private static File getGseRemoteDir(String winePrefix, int appId) {
