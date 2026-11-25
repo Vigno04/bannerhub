@@ -2,6 +2,16 @@ name: Build APK
 
 on:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref or SHA to check out'
+        required: false
+        type: string
+      version_tag:
+        description: 'Release tag / version string (e.g. v3.8.2-luatools)'
+        required: false
+        type: string
   push:
     tags:
       - 'v*'
@@ -16,6 +26,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
 
       - name: Download original APK
         run: |
@@ -63,7 +75,8 @@ jobs:
 
       - name: Inject build version
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
+          TAG_NAME="${{ inputs.version_tag || github.ref_name }}"
+          VERSION=${TAG_NAME#v}
           echo "Build version: $VERSION"
           # Use | as sed delimiter so branch names containing / (e.g. fix/foo) don't break the s/// expression.
           sed -i "s|^  versionName: .*|  versionName: $VERSION|" apktool_out_base/apktool.yml
@@ -904,6 +917,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
 
       - name: Install apktool
         run: |
@@ -946,7 +961,8 @@ jobs:
 
       - name: Inject BH_VERSION into extension
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
+          TAG_NAME="${{ inputs.version_tag || github.ref_name }}"
+          VERSION=${TAG_NAME#v}
           # Use | as sed delimiter so branch names containing / (e.g. fix/foo) don't break the s/// expression.
           sed -i "s|static final String BH_VERSION = \"[^\"]*\"|static final String BH_VERSION = \"$VERSION\"|" extension/BhSettingsExporter.java
           echo "BH_VERSION -> $VERSION"
@@ -974,7 +990,8 @@ jobs:
         id: sign
         run: |
           # Sanitize ref name so branches like fix/foo don't put / into the file path
-          SAFE_REF="${GITHUB_REF_NAME//\//-}"
+          TAG_NAME="${{ inputs.version_tag || github.ref_name }}"
+          SAFE_REF="${TAG_NAME//\//-}"
           APK_NAME="BannerHub-${SAFE_REF}-${{ matrix.variant }}.apk"
           BUILD_TOOLS=$(ls ${ANDROID_SDK_ROOT}/build-tools | tail -1)
           ${ANDROID_SDK_ROOT}/build-tools/${BUILD_TOOLS}/apksigner sign \
@@ -997,12 +1014,9 @@ jobs:
 
   release:
     needs: build
-    # Only auto-publish a GitHub Release on stable tag pushes (v3.7.2, etc).
-    # Skips on workflow_dispatch entirely — pre/beta/amazon tags dispatched
-    # manually produce artifacts only, matching the pre-release policy.
-    # The push trigger above already filters out v*-pre*/v*-beta*/v*-amazon*,
-    # so any push that reaches here is a stable tag.
-    if: github.event_name == 'push'
+    # Only auto-publish a GitHub Release on stable tag pushes (v3.7.2, etc)
+    # or when invoked via workflow_call from luatools-auto-release.
+    if: github.event_name == 'push' || (github.event_name == 'workflow_call' && inputs.version_tag != '')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -1010,7 +1024,9 @@ jobs:
       - name: Get tag name
         id: tag
         run: |
-          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+          if [ -n "${{ inputs.version_tag }}" ]; then
+            echo "name=${{ inputs.version_tag }}" >> $GITHUB_OUTPUT
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             echo "name=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           else
             echo "name=manual-$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
@@ -1026,6 +1042,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.name }}
+          target_commitish: ${{ inputs.ref || github.sha }}
           name: Bannerhub ${{ steps.tag.outputs.name }}
-          prerelease: ${{ contains(steps.tag.outputs.name, '-') }}
+          prerelease: ${{ contains(steps.tag.outputs.name, '-pre') || contains(steps.tag.outputs.name, '-beta') }}
           files: BannerHub-*.apk

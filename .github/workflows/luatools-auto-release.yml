@@ -1,0 +1,91 @@
+name: Auto-Sync Upstream BannerHub & Release LuaTools Mod
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      force_tag:
+        description: 'Optional tag override to force a build (e.g. v3.8.2-luatools)'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.upstream.outputs.should_build }}
+      commit_sha: ${{ steps.upstream.outputs.commit_sha }}
+      release_tag: ${{ steps.upstream.outputs.release_tag }}
+      upstream_tag: ${{ steps.upstream.outputs.upstream_tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check latest upstream BannerHub release & merge
+        id: upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${{ github.event.inputs.force_tag }}" ]; then
+            echo "release_tag=${{ github.event.inputs.force_tag }}" >> "$GITHUB_OUTPUT"
+            echo "upstream_tag=" >> "$GITHUB_OUTPUT"
+            echo "commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          UPSTREAM_TAG=$(curl -fsSL https://api.github.com/repos/The412Banner/BannerHub/releases/latest | jq -r '.tag_name')
+          if [ -z "$UPSTREAM_TAG" ] || [ "$UPSTREAM_TAG" = "null" ]; then
+            echo "::error::Failed to fetch latest upstream release tag"
+            exit 1
+          fi
+          TARGET_TAG="${UPSTREAM_TAG}-luatools"
+          echo "upstream_tag=${UPSTREAM_TAG}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${TARGET_TAG}" >> "$GITHUB_OUTPUT"
+
+          if gh release view "${TARGET_TAG}" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            echo "Release ${TARGET_TAG} already exists; skipping."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git remote add upstream https://github.com/The412Banner/BannerHub.git 2>/dev/null || true
+          git fetch upstream "refs/tags/${UPSTREAM_TAG}:refs/remotes/upstream/tags/${UPSTREAM_TAG}" --no-tags
+
+          UPSTREAM_COMMIT=$(git rev-list -n 1 "refs/remotes/upstream/tags/${UPSTREAM_TAG}")
+          if git merge-base --is-ancestor "${UPSTREAM_COMMIT}" HEAD; then
+            echo "Upstream ${UPSTREAM_TAG} (${UPSTREAM_COMMIT}) is already merged in HEAD; skipping."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if ! git merge --no-edit "${UPSTREAM_COMMIT}"; then
+            echo "Merge conflict detected; resolving with -X ours..."
+            git merge --abort
+            git merge --no-edit -X ours "${UPSTREAM_COMMIT}"
+          fi
+
+          git push origin HEAD:main
+          NEW_SHA=$(git rev-parse HEAD)
+          echo "New upstream release ${UPSTREAM_TAG} merged -> ${NEW_SHA} -> building ${TARGET_TAG}"
+          echo "commit_sha=${NEW_SHA}" >> "$GITHUB_OUTPUT"
+          echo "should_build=true" >> "$GITHUB_OUTPUT"
+
+  build_and_release:
+    needs: sync
+    if: needs.sync.outputs.should_build == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/build.yml
+    with:
+      ref: ${{ needs.sync.outputs.commit_sha }}
+      version_tag: ${{ needs.sync.outputs.release_tag }}
